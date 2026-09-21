@@ -1,0 +1,235 @@
+import asyncio
+import json
+from unittest.mock import AsyncMock
+
+import httpx
+import pytest
+
+from platetrace import agent, server
+from platetrace.store import now
+
+
+def payload(**overrides):
+    return {
+        "plate": "abc123",
+        "jurisdiction": "US / CA",
+        "provider": "demo",
+        "model_id": "demo-fixture",
+        "authorized": True,
+        **overrides,
+    }
+
+
+@pytest.fixture
+async def application(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(
+        server, "terminal_status", AsyncMock(return_value={"available": False, "reason": "No Docker"})
+    )
+    monkeypatch.setattr(agent, "cancel_terminal", AsyncMock())
+    app = server.create_app(tmp_path)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://127.0.0.1:8000",
+        ) as client,
+    ):
+        yield app, client, tmp_path
+
+
+async def test_create_demo_replay_sse_and_export_are_consistent_and_secret_free(application):
+    app, client, directory = application
+    response = await client.post("/api/runs", json=payload(api_key="not-for-storage"))
+    assert response.status_code == 201
+    run_id = response.json()["id"]
+    await asyncio.wait_for(app.state.store.runs[run_id].task, timeout=2)
+    detail = await client.get(f"/api/runs/{run_id}")
+    data = detail.json()
+    assert data["plate"] == "ABC123"
+    assert data["status"] == "completed"
+    assert data["sources"][0]["kind"] == "demo"
+    assert "synthetic" in json.dumps(data).lower()
+    assert "not-for-storage" not in detail.text
+    assert "not-for-storage" not in (directory / f"{run_id}.json").read_text()
+    history = (await client.get("/api/runs")).json()["runs"]
+    assert history[0]["id"] == run_id
+
+    first_event_id = data["events"][0]["id"]
+    stream = await client.get(f"/api/runs/{run_id}/events", headers={"Last-Event-ID": str(first_event_id)})
+    assert stream.status_code == 200 and "text/event-stream" in stream.headers["content-type"]
+    assert f"id: {first_event_id}\n" not in stream.text
+    assert "event: report" in stream.text and "event: done" in stream.text
+    assert stream.headers["x-accel-buffering"] == "no"
+    completed_stream = await client.get(f"/api/runs/{run_id}/events", headers={"Last-Event-ID": "99999"})
+    assert "event: done" in completed_stream.text
+    assert "event: report" not in completed_stream.text
+
+    exported = await client.get(f"/api/runs/{run_id}/export?format=json")
+    assert exported.json()["report"] == data["report"]
+    markdown = await client.get(f"/api/runs/{run_id}/export?format=markdown")
+    assert "Sources: S1" in markdown.text and "Synthetic demonstration record" in markdown.text
+    assert "attachment; filename=" in markdown.headers["content-disposition"]
+    assert (await client.get(f"/api/runs/{run_id}/export?format=html")).status_code == 400
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"authorized": False},
+        {"plate": "../../etc/passwd"},
+        {"vin": "INVALID"},
+        {"objective": "find the owner's address"},
+        {"source_urls": ["file:///etc/passwd"]},
+        {"source_urls": ["https://user:password@example.com"]},
+        {"max_steps": 99},
+    ],
+)
+async def test_validation_rejects_unsupported_input_without_echoing_keys(application, overrides):
+    _, client, _ = application
+    response = await client.post("/api/runs", json=payload(api_key="KEY_MUST_NOT_LEAK", **overrides))
+    assert response.status_code == 422
+    assert "KEY_MUST_NOT_LEAK" not in response.text
+    assert "input" not in response.json()["detail"][0]
+
+
+async def test_provider_and_terminal_preflight_validation(application):
+    _, client, _ = application
+    missing_key = await client.post("/api/runs", json=payload(provider="openrouter"))
+    assert missing_key.status_code == 400 and "API key" in missing_key.text
+    no_terminal = await client.post("/api/runs", json=payload(provider="ollama", enable_terminal=True))
+    assert no_terminal.status_code == 400 and "No Docker" in no_terminal.text
+    assert (await client.get("/api/models?provider=invalid")).status_code == 400
+    assert (await client.get("/api/runs/missing")).status_code == 404
+
+
+@pytest.mark.parametrize(
+    "headers,expected",
+    [
+        ({"Origin": "https://attacker.example"}, 403),
+        ({"Origin": "null"}, 403),
+        ({"Sec-Fetch-Site": "cross-site"}, 403),
+        ({"Host": "attacker.example"}, 400),
+        ({"Origin": "http://127.0.0.1:8000"}, 200),
+        ({"Origin": "http://[bad"}, 403),
+    ],
+)
+async def test_host_and_origin_guards(application, headers, expected):
+    _, client, _ = application
+    response = await client.get("/api/health", headers=headers)
+    assert response.status_code == expected
+
+
+async def test_security_headers_config_and_model_errors_do_not_expose_credentials(application, monkeypatch):
+    _, client, _ = application
+    monkeypatch.setenv("OPENROUTER_API_KEY", "ENV_KEY_MUST_NOT_LEAK")
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "BRAVE_KEY_MUST_NOT_LEAK")
+    config = await client.get("/api/config")
+    assert config.json()["openrouter_key_configured"] is True
+    assert config.json()["search"]["provider"] == "Brave"
+    assert "MUST_NOT_LEAK" not in config.text
+    assert config.headers["cache-control"] == "no-store"
+    assert config.headers["x-content-type-options"] == "nosniff"
+    assert "frame-ancestors 'none'" in config.headers["content-security-policy"]
+    monkeypatch.setattr(server, "list_models", AsyncMock(side_effect=server.ProviderError("Start Ollama.")))
+    models = await client.get("/api/models?provider=ollama")
+    assert models.json() == {"models": [], "error": "Start Ollama."}
+
+
+async def test_request_body_size_is_enforced_for_declared_and_chunked_bodies(application):
+    _, client, _ = application
+    declared = await client.post("/api/runs", content=b"x" * 1_000_001)
+    assert declared.status_code == 413
+
+    async def chunks():
+        yield b"x" * 600_000
+        yield b"x" * 600_000
+
+    chunked = await client.post("/api/runs", content=chunks(), headers={"Content-Type": "application/json"})
+    assert chunked.status_code == 413
+
+
+async def test_concurrent_run_limit_and_cancel_cleanup(application, monkeypatch):
+    app, client, _ = application
+    started = asyncio.Event()
+
+    async def wait_for_cancel(*args):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(agent.providers, "complete", wait_for_cancel)
+    ids = []
+    for _ in range(2):
+        response = await client.post("/api/runs", json=payload(provider="ollama"))
+        assert response.status_code == 201
+        ids.append(response.json()["id"])
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert (await client.post("/api/runs", json=payload())).status_code == 429
+    cancelled = await client.post(f"/api/runs/{ids[0]}/cancel")
+    assert cancelled.status_code == 200
+    await asyncio.wait_for(app.state.store.runs[ids[0]].task, timeout=1)
+    assert app.state.store.runs[ids[0]].data["status"] == "cancelled"
+    assert (await client.post(f"/api/runs/{ids[0]}/cancel")).json()["status"] == "cancelled"
+    agent.cancel_terminal.assert_any_await(ids[0])
+    await client.post(f"/api/runs/{ids[1]}/cancel")
+    await asyncio.wait_for(app.state.store.runs[ids[1]].task, timeout=1)
+    agent.cancel_terminal.assert_any_await(ids[1])
+
+
+async def test_server_shutdown_cancels_inflight_research_and_cleans_terminal(tmp_path, monkeypatch):
+    entered = asyncio.Event()
+    cleanup = AsyncMock()
+
+    async def wait_for_shutdown(*args):
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(agent.providers, "complete", wait_for_shutdown)
+    monkeypatch.setattr(agent, "cancel_terminal", cleanup)
+    app = server.create_app(tmp_path)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client,
+    ):
+        response = await client.post("/api/runs", json=payload(provider="ollama"))
+        run_id = response.json()["id"]
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        run = app.state.store.runs[run_id]
+        assert not run.task.done()
+    assert run.task.done()
+    assert run.data["status"] == "cancelled"
+    assert run.data["events"][-1]["type"] == "done"
+    cleanup.assert_awaited_once_with(run_id)
+
+
+async def test_history_startup_recovers_interrupted_runs_and_skips_invalid_files(tmp_path):
+    valid_id = "b" * 32
+    good = {
+        **payload(),
+        "id": valid_id,
+        "created_at": now(),
+        "status": "running",
+        "events": [],
+        "sources": [],
+        "report": None,
+    }
+    (tmp_path / f"{valid_id}.json").write_text(json.dumps(good))
+    (tmp_path / "broken.json").write_text("not json")
+    (tmp_path / "traversal.json").write_text(json.dumps({"id": "../bad", "status": "completed"}))
+    (tmp_path / "incomplete.json").write_text(json.dumps({"id": "c" * 32, "status": "completed"}))
+    app = server.create_app(tmp_path)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://localhost"
+        ) as client,
+    ):
+        response = await client.get("/api/runs")
+        assert response.status_code == 200
+        runs = response.json()["runs"]
+        assert len(runs) == 1
+        assert runs[0]["id"] == valid_id and runs[0]["status"] == "interrupted"
+        detail = (await client.get(f"/api/runs/{valid_id}")).json()
+        assert "server stopped" in detail["error"]
+    saved = json.loads((tmp_path / f"{valid_id}.json").read_text())
+    assert saved["status"] == "interrupted"

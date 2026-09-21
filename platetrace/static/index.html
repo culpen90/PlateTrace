@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101715">
+  <title>PlateTrace — Vehicle research, with receipts</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="PlateTrace home"><span class="brand-mark" aria-hidden="true">P<span></span></span><span>PlateTrace<span class="brand-subtitle">VEHICLE INTELLIGENCE</span></span></a>
+      <div class="workspace-label"><span class="live-dot"></span> LOCAL WORKSPACE</div>
+      <nav aria-label="Workspace navigation">
+        <a class="nav-link active" href="#research"><span aria-hidden="true">⌕</span> Research workspace <span class="nav-arrow" aria-hidden="true">↗</span></a>
+        <a class="nav-link" href="#recent-runs"><span aria-hidden="true">▤</span> Research history</a>
+        <a class="nav-link" href="#sources"><span aria-hidden="true">◎</span> Source library</a>
+      </nav>
+      <div class="sidebar-note"><div class="note-symbol" aria-hidden="true">↳</div><p>Every finding has a trail.</p><span>Public vehicle information.<br>Evidence you can inspect.</span></div>
+      <div class="sidebar-footer"><span class="local-icon" aria-hidden="true">◈</span><div>Runs on your machine<small id="app-version">PlateTrace · local edition</small></div></div>
+    </aside>
+
+    <main id="research">
+      <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong>Vehicle research</strong></div><span class="connection-pill" id="connection-status"><span class="live-dot"></span> Connecting</span></header>
+      <section class="hero" aria-labelledby="page-title"><div><div class="eyebrow"><span></span> AUTONOMOUS VEHICLE RESEARCH</div><h1 id="page-title">An agent that follows<br><span>the evidence.</span></h1><p>Give it a plate. Your agent chooses its searches, websites, and<br class="desktop-break"> terminal commands to research public vehicle facts.</p></div><div class="hero-meta"><span class="hero-grid" aria-hidden="true">╋</span><span>01 / RESEARCH<br><strong>Built for verification</strong></span></div></section>
+      <div id="global-alert" class="alert error" role="alert" hidden></div>
+
+      <div class="workspace-grid">
+        <section class="panel research-panel" aria-labelledby="research-title">
+          <div class="panel-heading"><div><span class="section-number">01</span><h2 id="research-title">Start a research run</h2></div><span class="tiny-tag">NEW INQUIRY</span></div>
+          <form id="research-form">
+            <div class="input-row plate-row"><div class="field"><label for="plate">License plate <span class="required">*</span></label><div class="plate-input"><span aria-hidden="true">▤</span><input id="plate" name="plate" required maxlength="20" placeholder="ABC1234" autocomplete="off" spellcheck="false"></div></div><div class="field"><label for="jurisdiction">Jurisdiction <span class="required">*</span></label><input id="jurisdiction" name="jurisdiction" required minlength="2" maxlength="80" placeholder="e.g. California, US" autocomplete="off"></div></div>
+            <p class="field-note">Use the state, province, or country that issued the plate.</p>
+            <div class="field objective-field"><label for="objective">Research objective</label><textarea id="objective" name="objective" rows="2" maxlength="2000">Find publicly available vehicle details, specifications, and recall information.</textarea></div>
+            <div class="divider"></div>
+            <div class="input-row provider-row"><div class="field"><label for="provider">Research engine</label><select id="provider" name="provider"><option value="demo">Demo · sample research</option><option value="ollama">Ollama · local model</option><option value="openrouter">OpenRouter · cloud model</option></select></div><div class="field"><label for="model-id">Model <button id="refresh-models" class="text-button" type="button" aria-label="Refresh available models">Refresh ↻</button></label><input id="model-id" name="model_id" list="model-options" placeholder="Select or enter model" autocomplete="off"><datalist id="model-options"></datalist></div></div>
+            <p id="provider-description" class="field-note provider-note">Explore a complete example without an API key.</p>
+            <div id="api-key-field" class="field" hidden><label for="api-key">OpenRouter API key <span class="optional">optional if configured on server</span></label><input id="api-key" name="api_key" type="password" placeholder="sk-or-…" autocomplete="off"><p class="field-note">Used for this run only. Never saved in this browser.</p></div>
+            <div id="model-message" class="field-note" role="status" hidden></div>
+            <label class="check-label terminal-option"><input id="enable-terminal" type="checkbox"><span>Enable autonomous terminal<small id="terminal-note">Checking internet-enabled Docker terminal availability…</small></span></label>
+            <details class="advanced-options"><summary>Vehicle clues & research options <span aria-hidden="true">+</span></summary><div class="advanced-content">
+              <p class="field-note">A plate alone may not resolve to a vehicle in public records. Add known details to make specifications and recall research more useful.</p>
+              <div class="field"><label for="vin">VIN <span class="optional">optional</span></label><input id="vin" name="vin" maxlength="17" placeholder="17-character vehicle identification number" autocomplete="off" spellcheck="false"></div>
+              <div class="input-row vehicle-row"><div class="field"><label for="make">Make</label><input id="make" name="make" maxlength="80" placeholder="Honda"></div><div class="field"><label for="vehicle-model">Vehicle model</label><input id="vehicle-model" name="model" maxlength="80" placeholder="Accord"></div><div class="field"><label for="year">Year</label><input id="year" name="year" type="number" min="1886" max="2100" placeholder="2020"></div></div>
+              <div class="field"><label for="max-steps">Research turn limit <span class="optional">2–40 turns</span></label><input id="max-steps" type="number" min="2" max="40" value="12" required><p class="field-note">The agent chooses its actions within this limit. More turns allow deeper research and may increase provider costs.</p></div>
+              <div class="field"><label for="source-urls">Starting URLs <span class="optional">one per line</span></label><textarea id="source-urls" name="source_urls" rows="3" placeholder="https://vpic.nhtsa.dot.gov/…" spellcheck="false"></textarea><p class="field-note" id="source-domains">Optional starting points. The agent can discover other public websites.</p></div>
+              <div class="field"><label for="records">Authorized vehicle records <span class="optional">JSON array</span></label><textarea id="records" name="records" rows="3" placeholder='[{"plate":"ABC1234","jurisdiction":"California, US","make":"Honda","model":"Accord","year":2020}]' spellcheck="false"></textarea><p class="field-note">Vehicle fields only: plate, jurisdiction, VIN, make, model, year, fuel, color.</p></div>
+            </div></details>
+            <div class="field purpose-field"><label for="purpose">Research purpose</label><select id="purpose"><option value="public_vehicle_research">Public vehicle research</option><option value="own_vehicle">My own vehicle</option><option value="authorized_fleet">Authorized fleet research</option><option value="authorized_dataset">Authorized vehicle dataset</option></select></div>
+            <label class="check-label authorization"><input id="authorized" type="checkbox" required><span>I am authorized to research this vehicle and use any records I provide.</span></label>
+            <div id="form-error" class="alert error" role="alert" hidden></div>
+            <button id="start-button" class="primary-button" type="submit"><span>Start research</span><span aria-hidden="true">↗</span></button>
+            <button id="demo-button" class="demo-button" type="button"><span aria-hidden="true">▷</span> Try an example research run</button>
+            <p class="scope-note"><span aria-hidden="true">◇</span> Vehicle facts only. No owner identification or location tracking.</p>
+          </form>
+        </section>
+
+        <div class="results-column">
+          <section class="panel results-panel" aria-labelledby="report-title">
+            <div class="panel-heading"><div><span class="section-number">02</span><h2 id="report-title">Research brief</h2></div><span id="run-status" class="status-badge idle">READY</span></div>
+            <div id="empty-report" class="empty-report"><div class="plate-illustration" aria-hidden="true"><div class="plate-hole left"></div><div class="plate-hole right"></div><span>PLATE TRACE</span><strong>••• – •••</strong><small>FOLLOW THE EVIDENCE</small></div><h3>A clear trail starts here.</h3><p>Your research brief will bring together vehicle<br class="desktop-break"> details, specifications, recalls, and source links.</p><div class="empty-capabilities"><span><i aria-hidden="true">✓</i> Public records</span><span><i aria-hidden="true">✓</i> Source citations</span><span><i aria-hidden="true">✓</i> Exportable report</span></div></div>
+            <div id="active-report" class="report-content" hidden><div class="run-meta"><span id="run-plate"></span><span id="run-engine"></span></div><p id="report-summary" class="report-summary" aria-live="polite"></p><div id="findings" class="findings"></div><div id="limitations-section" class="report-subsection" hidden><h3>What remains uncertain</h3><ul id="limitations"></ul></div><div id="next-steps-section" class="report-subsection" hidden><h3>Next steps</h3><ul id="next-steps"></ul></div><div id="run-error" class="alert error" role="alert" hidden></div><div class="export-bar"><span>Take your research with you</span><div><a id="export-markdown" class="secondary-button" download>Markdown ↓</a><a id="export-json" class="secondary-button" download>JSON ↓</a></div></div></div>
+          </section>
+
+          <section class="panel activity-panel" aria-labelledby="activity-title"><div class="panel-heading"><div><span class="activity-icon" aria-hidden="true">⌁</span><h2 id="activity-title">Terminal & browser activity</h2><span id="event-count" class="count-badge">0</span></div><button id="stop-button" class="stop-button" type="button" hidden>■ Stop run</button></div><div id="activity-log" class="activity-log" role="log" aria-live="polite" aria-relevant="additions"><div class="activity-empty"><span class="terminal-prompt" aria-hidden="true">›_</span><span>Agent activity will appear here.<small>Live searches, page reads, commands, and results.</small></span></div></div><div class="activity-footer"><span><span id="agent-dot" class="live-dot muted"></span> <span id="agent-state">Agent standing by</span></span><span id="search-state">Autonomous research · transparent steps</span></div></section>
+        </div>
+      </div>
+
+      <section class="panel sources-panel" id="sources" aria-labelledby="sources-title"><div class="panel-heading"><div><span class="section-number">03</span><h2 id="sources-title">Evidence & sources</h2><span id="source-count" class="count-badge">0</span></div><span class="tiny-tag">TRACEABLE BY DESIGN</span></div><div id="source-list" class="source-list"><div class="source-empty"><span aria-hidden="true">◎</span><p>Source links and excerpts will appear as your agent gathers evidence.</p></div></div></section>
+      <section class="history-section" id="recent-runs" aria-labelledby="history-title"><div class="history-heading"><h2 id="history-title">Recent research</h2><button id="refresh-runs" class="text-button" type="button">Refresh ↻</button></div><div class="history-table"><div class="history-table-head"><span>VEHICLE / JURISDICTION</span><span>ENGINE</span><span>STARTED</span><span>STATUS</span></div><div id="run-list"><p class="history-empty">Your research history will appear here.</p></div></div></section>
+      <footer class="page-footer"><span>PlateTrace <span class="footer-slash">/</span> Public vehicle research</span><span>Find the facts. Keep the sources.</span></footer>
+    </main>
+  </div>
+</body>
+</html>

@@ -117,7 +117,8 @@
       }
       $('model-id').value = config.defaults?.model || state.providers.find((p) => p.id === $('provider').value)?.default_model || '';
       $('max-steps').max = String(Number(config.limits?.max_steps) || 40);
-      $('max-steps').value = String(Math.min(12, Number($('max-steps').max)));
+      $('max-steps').value = String(Math.min(Number(config.defaults?.max_steps) || 24, Number($('max-steps').max)));
+      $('max-steps-note').textContent = `The total includes up to ${Number(config.limits?.report_turns) || 2} turns reserved to write and correct the report. More turns allow deeper research and may increase provider costs.`;
       $('app-version').textContent = `PlateTrace ${config.version || ''} · local edition`;
       const terminal = config.terminal || {};
       $('enable-terminal').disabled = !terminal.available;

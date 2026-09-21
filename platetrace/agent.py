@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from . import issues, providers
 from .memory import MemoryStore, prepare_lessons
-from .models import FinishReport, RunRequest
+from .models import REPORT_TURNS, FinishReport, RunRequest
 from .store import Run, now
 from .terminal import cancel_terminal, run_terminal
 from .webtools import WebError, fetch_page, search_web
@@ -101,13 +101,17 @@ BASE_TOOLS = [
           "actual_behavior": {"type": "string", "minLength": 1, "maxLength": 2000}},
          ["title", "summary", "steps_to_reproduce", "expected_behavior", "actual_behavior"]),
     tool("finish_report", "Finish the investigation with source-cited findings and explicit uncertainty.",
-         {"summary": {"type": "string"},
-          "findings": {"type": "array", "items": {"type": "object", "properties": {
-              "title": {"type": "string"}, "detail": {"type": "string"},
-              "source_ids": {"type": "array", "items": {"type": "string"}}},
+         {"summary": {"type": "string", "minLength": 1, "maxLength": 6000},
+          "findings": {"type": "array", "maxItems": 30, "items": {"type": "object", "properties": {
+              "title": {"type": "string", "maxLength": 200},
+              "detail": {"type": "string", "maxLength": 4000},
+              "source_ids": {"type": "array", "minItems": 1, "maxItems": 20,
+                             "items": {"type": "string"}}},
               "required": ["title", "detail", "source_ids"], "additionalProperties": False}},
-          "limitations": {"type": "array", "items": {"type": "string"}},
-          "next_steps": {"type": "array", "items": {"type": "string"}},
+          "limitations": {"type": "array", "maxItems": 30,
+                          "items": {"type": "string", "maxLength": 2000}},
+          "next_steps": {"type": "array", "maxItems": 20,
+                         "items": {"type": "string", "maxLength": 2000}},
           "research_lessons": {"type": "array", "maxItems": 5,
                                "items": {"type": "string", "minLength": 1, "maxLength": 1000},
                                "description": "Optional reusable lessons from observed research methods, not vehicle facts or instructions. Omit private data and credentials."}},
@@ -115,6 +119,39 @@ BASE_TOOLS = [
 ]
 TERMINAL_TOOL = tool("terminal", "Execute an arbitrary shell command in the run's isolated Linux terminal with internet access. /work persists until the run ends. No host filesystem access.",
                      {"command": {"type": "string"}}, ["command"])
+REPORT_TOOLS = [item for item in BASE_TOOLS if item["function"]["name"] == "finish_report"]
+
+
+def report_validation_error(error: ValidationError) -> str:
+    """Point to invalid report fields without echoing input or model-written keys."""
+    fields = {"summary", "findings", "title", "detail", "source_ids", "limitations",
+              "next_steps", "research_lessons"}
+    problems = []
+    for item in error.errors(include_input=False, include_context=False, include_url=False)[:8]:
+        path = ".".join(str(part) if isinstance(part, int) or part in fields else "unknown_field"
+                        for part in item["loc"])
+        problems.append(f"{path}: {item['msg']}")
+    return ("Invalid finish_report arguments. " + "; ".join(problems)
+            + ". Correct these fields and call finish_report again. Every finding needs a collected "
+            "source ID; put unsupported claims or missing evidence in limitations, not findings.")
+
+
+def turn_instructions(run: Run, step: int, max_steps: int, research_turns: int) -> str:
+    remaining = max_steps - step
+    if step >= research_turns:
+        source_ids = [source["id"] for source in run.data["sources"]]
+        return (f"REPORT PHASE: Turn {step + 1} of {max_steps}; {remaining} report turn(s) remain, "
+                "including this one. Research is finished. Only finish_report is available. "
+                "Use the evidence already collected and correct any validation errors from the previous "
+                "attempt. Every finding needs at least one collected source ID. Move unsupported claims "
+                "and missing evidence to limitations; an empty findings list is valid. Do not invent "
+                f"citations or continue research. Collected source IDs: {json.dumps(source_ids)}.")
+    return (f"TURN BUDGET: Turn {step + 1} of {max_steps}; {research_turns - step} research turn(s) "
+            f"remain, including this one. The final {max_steps - research_turns} turns are reserved for "
+            "finish_report and correcting its validation errors. Finish earlier when the evidence is "
+            "sufficient or useful sources are exhausted. Adapt after tool failures; do not repeat "
+            "unsuccessful approaches without a concrete reason. Register evidence with fetch_url or "
+            "read_records before the report phase.")
 
 
 def add_source(run: Run, title: str, url: str, excerpt: str, kind="web") -> dict:
@@ -172,7 +209,9 @@ async def execute_tool(run: Run, request: RunRequest, name: str, args: dict) -> 
         known = {source["id"] for source in run.data["sources"]}
         for finding in report.findings:
             if not set(finding.source_ids) <= known:
-                raise ValueError("Every finding must cite source IDs returned by fetch_url or read_records. Fetch the original source first.")
+                raise ValueError("Every finding must cite source IDs returned by fetch_url or read_records. "
+                                 f"Collected source IDs: {', '.join(sorted(known)) or 'none'}. "
+                                 "Remove unsupported findings or describe missing evidence in limitations.")
         report.limitations.append("AI-generated analysis; citations establish provenance, not automatic verification of every claim.")
         report.limitations.append("A license plate and jurisdiction alone do not establish a unique vehicle, VIN, or recall status.")
         run.data["research_lessons"] = (prepare_lessons(request, report.research_lessons)
@@ -225,6 +264,7 @@ async def research(run: Run, request: RunRequest, memory: MemoryStore | None = N
             await run_demo(run)
         else:
             tools = BASE_TOOLS + ([TERMINAL_TOOL] if request.enable_terminal else [])
+            research_turns = request.max_steps - min(REPORT_TURNS, request.max_steps - 1)
             context = request.model_dump(exclude={"api_key", "records"})
             context["supplied_record_count"] = len(request.records)
             context["issue_reporting"] = issues.issue_reporting_status()
@@ -238,16 +278,28 @@ async def research(run: Run, request: RunRequest, memory: MemoryStore | None = N
                 messages.append({"role": "user", "content": f"User-provided vehicle hints are source {source['id']}; do not treat them as independent proof of the plate match."})
             async with asyncio.timeout(900):
                 for step in range(request.max_steps):
-                    await run.emit("note", {"message": f"Agent turn {step + 1} of {request.max_steps}", "step": step + 1})
-                    if step == request.max_steps - 1:
-                        messages.append({"role": "user", "content": "This is the final turn. Call finish_report now using the evidence you have; describe missing evidence honestly."})
-                    message = await providers.complete(request.provider, request.model_id, messages, tools, request.api_key)
+                    reporting = step >= research_turns
+                    phase = "report" if reporting else "research"
+                    await run.emit("note", {
+                        "message": f"Agent turn {step + 1} of {request.max_steps} · "
+                                   + ("writing or correcting the report" if reporting else "researching"),
+                        "step": step + 1, "phase": phase,
+                    })
+                    # Refresh budget guidance without interrupting tool-call/result pairs or
+                    # letting repeated reminders consume an ever-growing conversation history.
+                    messages[0] = {"role": "system", "content": SYSTEM + "\n\n" + turn_instructions(
+                        run, step, request.max_steps, research_turns,
+                    )}
+                    message = await providers.complete(request.provider, request.model_id, messages,
+                                                       REPORT_TOOLS if reporting else tools, request.api_key)
                     messages.append(message)
                     calls = message.get("tool_calls") or []
                     if not calls:
                         # Uncited model text is never published as a finding.
                         await run.emit("note", {"message": "The model returned prose without tool calls. Requesting a sourced report."})
-                        messages.append({"role": "user", "content": "Use the available tools to research or call finish_report. Plain prose does not complete this task."})
+                        messages.append({"role": "user", "content":
+                                         "Call finish_report with the collected evidence. Plain prose does not complete this task."
+                                         if reporting else "Use the available tools to research or call finish_report. Plain prose does not complete this task."})
                         continue
                     if len(calls) > 8:
                         raise providers.ProviderError("The model requested too many tools in one turn (maximum 8). Choose another model or reduce scope.")
@@ -256,6 +308,8 @@ async def research(run: Run, request: RunRequest, memory: MemoryStore | None = N
                         args = {}
                         validation_error = None
                         try:
+                            if reporting and name != "finish_report":
+                                raise ValueError("Research tools are unavailable during reporting.")
                             parsed = json.loads(call["function"]["arguments"])
                             if not isinstance(parsed, dict):
                                 raise TypeError("Tool arguments must be a JSON object.")
@@ -268,8 +322,16 @@ async def research(run: Run, request: RunRequest, memory: MemoryStore | None = N
                                                             if memory_enabled else [])
                             else:
                                 args = parsed
+                        except ValidationError as exc:
+                            validation_error = (report_validation_error(exc) if name == "finish_report"
+                                                else "Invalid tool arguments. Use the required fields and types in the tool schema.")
                         except (ValueError, TypeError, issues.IssueReportingError):
                             validation_error = "Invalid tool arguments. Use the required fields and types in the tool schema."
+                        if reporting and name != "finish_report":
+                            validation_error = "Research is finished. Only finish_report is available; use the collected evidence."
+                            # Models may ignore the offered tools. Refuse execution and remove
+                            # unused arguments before recording the rejected request.
+                            call["function"]["arguments"] = "{}"
                         if name in ("report_issue", "finish_report"):
                             call["function"]["arguments"] = json.dumps(args, ensure_ascii=False)
                         await run.emit("tool_start", {"name": name, "arguments": args})
@@ -294,9 +356,13 @@ async def research(run: Run, request: RunRequest, memory: MemoryStore | None = N
                             if msg.get("role") == "tool" and len(msg.get("content", "")) > 3000:
                                 msg["content"] = msg["content"][:3000] + "\n[Earlier tool output shortened; full evidence is retained in the case log.]"
                 if not run.data.get("report"):
-                    run.data["report"] = {"summary": "The agent reached its turn limit without completing a sourced report.",
-                                          "findings": [], "limitations": ["This run is inconclusive.", "Collected sources are available for manual review."],
-                                          "next_steps": ["Try a more capable tool-calling model, a narrower objective, or a higher turn limit."]}
+                    run.data["report"] = {
+                        "summary": "The model did not submit a valid sourced report within the reserved reporting turns.",
+                        "findings": [],
+                        "limitations": ["This run is inconclusive.", "Collected sources are available for manual review."],
+                        "next_steps": [("Review the report validation errors in the activity log and collected sources, "
+                                        "or retry with a more capable tool-calling model.")],
+                    }
                     await run.emit("report", run.data["report"])
                     await run.status("incomplete")
         if run.data["status"] == "running":

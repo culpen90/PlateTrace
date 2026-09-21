@@ -149,7 +149,7 @@ Only `plate`, `jurisdiction`, `vin`, `make`, `model`, `year`, `fuel`, and `color
 
 Case history is stored under `.platetrace/runs/` with owner-only file permissions, including input, visible tool logs, source excerpts, and reports. API keys and hidden model reasoning are excluded. Up to 100 recent cases are kept; the oldest inactive case is removed when a new case exceeds that limit. The UI does not persist credentials. Stop the app and remove its data directory to erase history. The default is local single-user use; do not expose the server publicly.
 
-Each run is limited to 2–40 model turns (default 12), eight tool calls per turn, and 15 minutes. At most two runs are active at once. Provider calls have deadlines. Stopping a run cancels active work and attempts container cleanup; a cloud provider may still bill a request already submitted. Server restart marks unfinished runs interrupted; it does not silently restart billable work.
+Each run is limited to 2–40 model turns (default 24), eight tool calls per turn, and 15 minutes. The final two turns are reserved within that total to write a sourced report and correct it if needed; a two-turn run reserves one turn for research and one for its report. The agent may finish earlier. More turns allow deeper research and may increase provider costs. At most two runs are active at once. Provider calls have deadlines. Stopping a run cancels active work and attempts container cleanup; a cloud provider may still bill a request already submitted. Server restart marks unfinished runs interrupted; it does not silently restart billable work.
 
 ## Development and verification
 

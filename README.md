@@ -83,12 +83,24 @@ The agent can use any public site within the research scope. It is instructed to
 
 1. Enter a plate and issuing country/state/province, or upload a plate photo and review the detected text. The same text may occur in multiple jurisdictions.
 2. Describe the public vehicle question. Optionally add a VIN, make/model/year, or starting URLs you already have.
-3. Select OpenRouter or Ollama, a tool-capable model, and the run's turn limit. Enable the terminal if Docker is ready.
+3. Select OpenRouter or Ollama, a tool-capable model, and the run's turn limit. Enable the terminal if Docker is ready. Leave **Use past research memory** on to recall and save research lessons, or turn it off for this run.
 4. Choose the research purpose that describes your situation (see below), then confirm that you are authorized to conduct the research and use any supplied records.
 5. Start the agent. Inspect its actual tool requests/results in the live activity log. Stop it at any time.
 6. Review findings, citations, and limitations. Export JSON (including events and sources) or a Markdown report.
 
 A supplied VIN or record is labeled user-provided, not independently verified. Model/year recalls alone do not establish whether a particular VIN is affected or repaired. No result does not establish that a vehicle does not exist or has no recalls.
+
+### Research memory
+
+**Use past research memory** is enabled by default for live runs. The agent keeps compact lessons from earlier runs, including useful source leads, observed tool successes and failures, and optional research lessons supplied when the model finishes its report. Later runs recall up to five relevant entries from the past 90 days, matched by jurisdiction, vehicle clues, or research objective. This gives the model context for choosing its next steps; it does not train or change the model, and creating memory requires no extra model calls.
+
+Recalled lessons and source leads are sent to your selected model provider with the new run. They are untrusted hints, not verified facts about the current vehicle. The agent must collect fresh evidence before using a remembered source in a finding. Demo runs never read or save memory. Turning the checkbox off skips both recall and saving for that run.
+
+The **Research memory** panel shows the saved entry count and lets you inspect lessons, source leads, and tool outcomes. **Clear memory** removes all saved entries without deleting case history. Older case logs are not automatically imported again, and runs already in progress when you clear memory cannot add it back when they finish. Clearing cannot remove context already sent to a provider or erase a run's audit trail. Memory events in the activity log and the JSON export show recall and save activity.
+
+On the first startup with no memory file, PlateTrace imports observed tool outcomes and source website origins from eligible finished live runs in the last 90 days. This one-time import excludes demo runs and legacy report prose or model-written lessons. Clearing memory leaves an empty memory file, so restarting does not reimport the old case history.
+
+Memory is stored locally in `.platetrace/runs/memory/entries.json` and retains at most 200 entries within a 2 MB storage limit across restarts. Entries omit raw plates, VINs, supplied records, terminal logs, credentials, and report findings; source leads are sanitized. Model-written lessons receive best-effort redaction, which cannot guarantee removal of every sensitive detail. Inspect and clear saved entries as needed. Full case history has its own retention policy below.
 
 ### Start from a plate photo
 
@@ -147,6 +159,6 @@ Each run is limited to 2–40 model turns (default 12), eight tool calls per tur
 node --check platetrace/static/app.js
 ```
 
-Tests mock provider, GitHub, and Docker responses to cover tool conversations, validation, cancellation, terminal isolation flags, issue reporting, source handling, and API lifecycle without sending plate queries, publishing issues, or spending credits. A passing mock test is not evidence of a successful live model investigation, authenticated GitHub submission, or live Docker session. Use your configured services to verify that environment separately.
+Tests mock provider, GitHub, and Docker responses to cover tool conversations, validation, cancellation, terminal isolation flags, issue reporting, source handling, research memory, and API lifecycle without sending plate queries, publishing issues, or spending credits. A passing mock test is not evidence of a successful live model investigation, authenticated GitHub submission, or live Docker session. Use your configured services to verify that environment separately.
 
 Implementation references: [OpenRouter tool calling](https://openrouter.ai/docs/guides/features/tool-calling), [Ollama chat API](https://docs.ollama.com/api/chat), [GitHub issue creation](https://docs.github.com/en/rest/issues/issues#create-an-issue), [Docker container run](https://docs.docker.com/engine/containers/run/), and [Brave Search API](https://api-dashboard.search.brave.com/app/documentation/web-search/get-started).

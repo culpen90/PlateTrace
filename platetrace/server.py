@@ -15,6 +15,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import issues
 from .agent import research
+from .memory import MemoryStore
 from .models import RunRequest
 from .photos import MAX_PHOTO_REQUEST_BYTES, PhotoError, PhotoRequest, read_plate
 from .providers import ProviderError, list_models
@@ -26,11 +27,18 @@ STATIC = Path(__file__).parent / "static"
 
 def create_app(data_dir: Path | None = None):
     store = Store(data_dir or Path(os.getenv("PLATETRACE_DATA_DIR", ".platetrace")) / "runs")
+    memory = MemoryStore(store.directory / "memory")
     photo_reads = 0
 
     @asynccontextmanager
     async def lifespan(app):
         store.load()
+        memory.load()
+        try:
+            memory.bootstrap(run.data for run in store.runs.values())
+        except OSError:
+            # Optional memory must not stop research when local storage is unavailable.
+            pass
         yield
         tasks = [run.task for run in store.runs.values() if run.task and not run.task.done()]
         for task in tasks:
@@ -40,6 +48,7 @@ def create_app(data_dir: Path | None = None):
 
     app = FastAPI(title="PlateTrace", version="0.1.0", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.store = store
+    app.state.memory = memory
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "[::1]"])
 
     @app.middleware("http")
@@ -122,6 +131,19 @@ def create_app(data_dir: Path | None = None):
         except ProviderError as exc:
             return {"models": [], "error": str(exc)}
 
+    @app.get("/api/memory")
+    async def memory_detail():
+        return memory.snapshot()
+
+    @app.delete("/api/memory")
+    async def clear_memory():
+        count = memory.snapshot()["count"]
+        try:
+            memory.clear()
+        except OSError:
+            raise HTTPException(503, "Research memory could not be cleared. Check local data storage and retry.") from None
+        return {**memory.snapshot(), "cleared": count}
+
     @app.post("/api/runs", status_code=201)
     async def start_run(request: RunRequest):
         if sum(run.data["status"] in ("queued", "running", "cancelling") for run in store.runs.values()) >= 2:
@@ -137,7 +159,9 @@ def create_app(data_dir: Path | None = None):
         data.update({"id": run_id, "created_at": now(), "status": "queued", "events": [], "sources": [],
                      "issue_reports": [], "report": None})
         run = store.add(data)
-        run.task = asyncio.create_task(research(run, request), name=f"research-{run_id}")
+        run.task = asyncio.create_task(
+            research(run, request, memory, memory_generation=memory.generation), name=f"research-{run_id}",
+        )
         return {"id": run_id}
 
     @app.post("/api/photos/read")

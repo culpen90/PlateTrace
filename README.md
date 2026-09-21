@@ -35,6 +35,23 @@ Skip `ollama serve` if Ollama is already running. Refresh models in PlateTrace a
 
 **Demo:** a clearly marked synthetic fixture exercises the UI, event log, report, and exports without contacting an LLM, terminal, or website. It is not a real plate lookup.
 
+### Enable automatic GitHub issue reports
+
+The agent can report an actionable PlateTrace bug when it judges a report necessary. Reporting uses the server's GitHub API connection and works with terminal access disabled or Docker unavailable. Demo runs never publish issues.
+
+To enable reporting, create a [fine-grained GitHub personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) for the selected repository with **Issues: read and write** permission. Set these values in `.env`, then restart PlateTrace:
+
+```dotenv
+PLATETRACE_GITHUB_TOKEN=your-token
+PLATETRACE_GITHUB_REPOSITORY=culpen90/PlateTrace
+```
+
+Set your own `owner/repository` explicitly when using a fork. The default tracker, `culpen90/PlateTrace`, is public; a custom tracker's reports are visible to people who have access to that repository. **Configuring the token authorizes automatic issue creation without per-run confirmation.** Remove the token and restart the server to disable reporting. The token stays on the server and is not provided to the model, browser, or terminal container. The UI shows reporting availability next to the terminal control.
+
+Reports describe the defect, reproduction steps, and expected and actual behavior. The agent is instructed to report actionable application defects, not an expected lack of public vehicle matches, normal access controls, or routine setup problems. The server checks for earlier agent reports with the same normalized title, including closed issues, and permits at most three creation attempts per run. This does not detect every differently worded or manually filed duplicate. Created or existing issue links appear in the activity log, research brief, and exports. Reporting failures remain visible as tool errors so the agent can continue research.
+
+Reports should contain only the minimum technical detail needed to reproduce a bug. Raw case logs are not attached automatically. The server applies best-effort redaction to known credentials, supplied vehicle identifiers, and common sensitive text patterns; this cannot guarantee removal of every sensitive detail from model-written text. Do not include private information in issue reports.
+
 ### Enable the autonomous terminal
 
 Install and start a Linux-container Docker runtime, then prepare the default image:
@@ -57,6 +74,7 @@ Set `PLATETRACE_TERMINAL_IMAGE` to a trusted, prebuilt image if you need extra t
 - `fetch_url`: reads public HTTP(S) HTML, text, JSON, and XML, records source URLs and retrieval times, and returns page links for further exploration. Supports ports 80/443, up to five redirects, 1 MB responses, and a bounded text excerpt. Unsupported formats can be explored with terminal utilities.
 - `terminal`: arbitrary shell in the run's internet-enabled temporary container. The model chooses commands; there is no fixed command allowlist or database pipeline.
 - `read_records`: optional exact plate/jurisdiction lookup in the vehicle records you supply.
+- `report_issue`: files a necessary PlateTrace bug report in the configured GitHub tracker or returns an existing report. Available when server-side GitHub reporting is configured, independently of terminal access.
 - `finish_report`: validates report structure and checks that every finding references collected source IDs. It does not prove that a source supports the model's interpretation; review important claims against originals.
 
 The agent can use any public site within the research scope. It is instructed to respect access controls and treat external text as untrusted data. Sites requiring authentication, payment, CAPTCHAs, or special access can remain unavailable. Network errors and inconclusive research are explicit; no fictitious lookup result is substituted.
@@ -129,6 +147,6 @@ Each run is limited to 2–40 model turns (default 12), eight tool calls per tur
 node --check platetrace/static/app.js
 ```
 
-Tests mock provider and Docker responses to cover tool conversations, validation, cancellation, terminal isolation flags, source handling, and API lifecycle without sending plate queries or spending credits. A passing mock test is not evidence of a successful live model investigation or live Docker session. Use your configured provider and container runtime to verify that environment separately.
+Tests mock provider, GitHub, and Docker responses to cover tool conversations, validation, cancellation, terminal isolation flags, issue reporting, source handling, and API lifecycle without sending plate queries, publishing issues, or spending credits. A passing mock test is not evidence of a successful live model investigation, authenticated GitHub submission, or live Docker session. Use your configured services to verify that environment separately.
 
-Implementation references: [OpenRouter tool calling](https://openrouter.ai/docs/guides/features/tool-calling), [Ollama chat API](https://docs.ollama.com/api/chat), [Docker container run](https://docs.docker.com/engine/containers/run/), and [Brave Search API](https://api-dashboard.search.brave.com/app/documentation/web-search/get-started).
+Implementation references: [OpenRouter tool calling](https://openrouter.ai/docs/guides/features/tool-calling), [Ollama chat API](https://docs.ollama.com/api/chat), [GitHub issue creation](https://docs.github.com/en/rest/issues/issues#create-an-issue), [Docker container run](https://docs.docker.com/engine/containers/run/), and [Brave Search API](https://api-dashboard.search.brave.com/app/documentation/web-search/get-started).

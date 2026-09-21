@@ -29,6 +29,24 @@
       return ['http:', 'https:'].includes(url.protocol) ? url.href : null;
     } catch { return null; }
   };
+  const safeIssueUrl = (issue) => {
+    if (!issue || !['created', 'existing'].includes(issue.status) || !Number.isSafeInteger(issue.number) || issue.number < 1) return null;
+    try {
+      const url = new URL(issue.url);
+      return url.protocol === 'https:' && url.hostname === 'github.com' && !url.port && !url.username && !url.password && !url.search && !url.hash
+        && /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9]\d*$/.test(url.pathname)
+        && url.pathname.endsWith(`/issues/${issue.number}`) ? url.href : null;
+    } catch { return null; }
+  };
+  const issueLink = (issue, text) => {
+    const url = safeIssueUrl(issue);
+    if (!url) return null;
+    const link = el('a', 'issue-link', text);
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    return link;
+  };
   const showAlert = (id, message) => {
     $(id).textContent = message || '';
     $(id).hidden = !message;
@@ -113,6 +131,7 @@
       showAlert('global-alert', `Cannot connect to the local server. ${error.message} Start PlateTrace, then refresh this page.`);
       $('enable-terminal').disabled = true;
       $('terminal-note').textContent = 'Connect to the local server to check terminal availability.';
+      $('issue-reporting-note').textContent = 'Connect to the local server to check GitHub issue reporting availability.';
     }
   }
 
@@ -131,6 +150,11 @@
       $('photo-model').value = '';
     }
     $('provider-description').textContent = demo ? 'A labeled sample run. No model calls or live web research.' : provider === 'ollama' ? 'Your local model chooses its own research steps. It needs tool-calling support.' : 'Your research context is sent to the selected cloud provider through OpenRouter. Choose a model with tool-calling support.';
+    const reporting = state.config?.issue_reporting;
+    $('issue-reporting-note').textContent = reporting?.available
+      ? demo ? `Automatic GitHub reporting is configured for ${reporting.repository}. Demo runs never publish issues.`
+        : `The agent can automatically file necessary PlateTrace bug reports in ${reporting.repository}. ${reporting.repository?.toLowerCase() === 'culpen90/platetrace' ? 'This tracker is public.' : 'Reports are visible to anyone with access to that tracker.'} No terminal access is needed.`
+      : `${reporting?.reason || 'Automatic GitHub issue reporting is not configured.'} Set up GitHub reporting in .env and restart the server to enable it. No terminal access is needed.`;
     invalidatePhotoRecognition();
     updatePhotoControls();
   }
@@ -458,6 +482,20 @@
     }));
   }
 
+  function renderIssueReports(reports) {
+    const seen = new Set();
+    const entries = (Array.isArray(reports) ? reports : []).flatMap((issue) => {
+      const url = safeIssueUrl(issue);
+      if (!url || seen.has(url)) return [];
+      seen.add(url);
+      const item = el('li');
+      item.append(issueLink(issue, `#${issue.number} · ${issue.title || 'PlateTrace issue'} ↗`), document.createTextNode(issue.status === 'created' ? ' — filed by this run' : ' — existing report'));
+      return [item];
+    });
+    $('issue-reports').replaceChildren(...entries);
+    $('issue-reports-section').hidden = !entries.length;
+  }
+
   function renderRun(run, replay = true) {
     state.run = run;
     $('empty-report').hidden = true;
@@ -468,6 +506,7 @@
     $('export-json').href = `/api/runs/${encodeURIComponent(run.id)}/export?format=json`;
     renderStatus(statusOf(run));
     renderReport(run.report);
+    renderIssueReports(run.issue_reports);
     renderSources(run.sources);
     showAlert('run-error', run.error ? readable(run.error) : '');
     if (replay && Array.isArray(run.events)) run.events.forEach((event) => appendEvent(event, false));
@@ -498,6 +537,11 @@
     row.append(el('time', 'event-time', timeLabel(event.time)));
     const body = el('div', 'event-body');
     body.append(el('span', 'event-label', String(display.label).toUpperCase()), el('span', null, readable(display.text)));
+    if (event.type === 'tool_result' && event.data?.name === 'report_issue') {
+      const result = event.data.result;
+      const link = issueLink(result, `${result?.status === 'created' ? 'Filed' : 'Found existing'} GitHub issue #${result?.number} ↗`);
+      if (link) body.append(el('br'), link);
+    }
     if (display.detail !== undefined) {
       const details = el('details');
       details.append(el('summary', null, event.type === 'tool_start' ? 'View arguments' : 'View result'), el('pre', null, readable(display.detail)));

@@ -136,6 +136,51 @@ async def test_security_headers_config_and_model_errors_do_not_expose_credential
     assert models.json() == {"models": [], "error": "Start Ollama."}
 
 
+async def test_issue_reporting_configuration_is_independent_of_terminal_and_secret_free(application, monkeypatch):
+    _, client, _ = application
+    monkeypatch.setenv("PLATETRACE_GITHUB_REPOSITORY", "example/vehicle-research")
+    monkeypatch.setenv("PLATETRACE_GITHUB_TOKEN", "GITHUB_TOKEN_MUST_NOT_LEAK")
+    configured = await client.get("/api/config")
+    assert configured.status_code == 200
+    config = configured.json()
+    assert config["terminal"]["available"] is False
+    assert config["issue_reporting"]["available"] is True
+    assert config["issue_reporting"]["repository"] == "example/vehicle-research"
+    assert config["issue_reporting"]["url"] == "https://github.com/example/vehicle-research/issues"
+    assert "GITHUB_TOKEN_MUST_NOT_LEAK" not in configured.text
+
+    monkeypatch.delenv("PLATETRACE_GITHUB_TOKEN")
+    missing_token = await client.get("/api/config")
+    assert missing_token.json()["issue_reporting"]["available"] is False
+    assert missing_token.json()["issue_reporting"]["reason"]
+    assert missing_token.json()["terminal"]["available"] is False
+
+
+async def test_reported_issue_links_survive_api_exports_and_history_reload(application):
+    app, client, directory = application
+    response = await client.post("/api/runs", json=payload())
+    run_id = response.json()["id"]
+    run = app.state.store.runs[run_id]
+    await asyncio.wait_for(run.task, timeout=2)
+    issues = [{"status": "created", "url": "https://github.com/example/vehicle-research/issues/17",
+               "number": 17, "title": "Source reader fails for JSON", "state": "open"}]
+    run.data["issue_reports"] = issues
+    run.save()
+
+    detail = await client.get(f"/api/runs/{run_id}")
+    exported = await client.get(f"/api/runs/{run_id}/export?format=json")
+    markdown = await client.get(f"/api/runs/{run_id}/export?format=markdown")
+    assert detail.json()["issue_reports"] == issues
+    assert exported.json()["issue_reports"] == issues
+    assert issues[0]["url"] in markdown.text
+    assert "#17" in markdown.text
+    assert "created" in markdown.text
+
+    reloaded = server.create_app(directory)
+    async with reloaded.router.lifespan_context(reloaded):
+        assert reloaded.state.store.runs[run_id].data["issue_reports"] == issues
+
+
 async def test_request_body_size_is_enforced_for_declared_and_chunked_bodies(application):
     _, client, _ = application
     declared = await client.post("/api/runs", content=b"x" * 1_000_001)

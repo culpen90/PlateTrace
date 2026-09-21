@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from . import issues
 from .agent import research
 from .models import RunRequest
 from .photos import MAX_PHOTO_REQUEST_BYTES, PhotoError, PhotoRequest, read_plate
@@ -105,6 +106,7 @@ def create_app(data_dir: Path | None = None):
             {"id": "demo", "label": "Demo · synthetic fixture", "default_model": "demo-fixture"},
         ], "defaults": {"provider": "ollama", "model": os.getenv("OLLAMA_MODEL", "qwen3:8b")},
             "terminal": await terminal_status(),
+            "issue_reporting": issues.issue_reporting_status(),
             "search": {"available": True, "provider": "Brave" if os.getenv("BRAVE_SEARCH_API_KEY") else "DuckDuckGo (best effort)"},
             "allowed_domains": [], "limits": {"max_steps": 40},
             "openrouter_key_configured": bool(os.getenv("OPENROUTER_API_KEY"))}
@@ -132,7 +134,8 @@ def create_app(data_dir: Path | None = None):
                 raise HTTPException(400, status["reason"])
         run_id = uuid.uuid4().hex
         data = request.model_dump(exclude={"api_key", "records"})
-        data.update({"id": run_id, "created_at": now(), "status": "queued", "events": [], "sources": [], "report": None})
+        data.update({"id": run_id, "created_at": now(), "status": "queued", "events": [], "sources": [],
+                     "issue_reports": [], "report": None})
         run = store.add(data)
         run.task = asyncio.create_task(research(run, request), name=f"research-{run_id}")
         return {"id": run_id}

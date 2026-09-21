@@ -101,5 +101,9 @@ def markdown_report(data: dict) -> str:
     for source in data["sources"]:
         lines += [f"- {source['id']}: {source['title']} — {source.get('url', 'User-provided data')}",
                   f"  Retrieved: {source['retrieved_at']}; type: {source['kind']}"]
+    if data.get("issue_reports"):
+        lines += ["", "## GitHub issue reports", ""]
+        for issue in data["issue_reports"]:
+            lines += [f"- #{issue['number']} ({issue['status']}): {issue['url']}"]
     lines += ["", "AI-generated research requires independent verification. A plate is not a unique global vehicle identifier."]
     return "\n".join(lines) + "\n"

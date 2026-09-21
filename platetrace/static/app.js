@@ -4,10 +4,13 @@
   const $ = (id) => document.getElementById(id);
   const ACTIVE = new Set(['queued', 'pending', 'running', 'researching', 'starting', 'cancelling']);
   const FINAL = new Set(['completed', 'complete', 'succeeded', 'failed', 'error', 'cancelled', 'canceled', 'interrupted', 'incomplete']);
+  const PHOTO_MAX_BYTES = 8 * 1024 * 1024;
+  const PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
   const state = {
     config: null, run: null, stream: null, poll: null, sourceRefresh: null,
     eventIds: new Set(), eventCount: 0, submitting: false, modelRequest: 0,
     selection: 0, runListRequest: 0, providers: [],
+    photo: { fileVersion: 0, request: 0, reader: null, controller: null, dataUrl: '', loading: false, pending: false, suggestion: null },
   };
 
   const el = (tag, className, content) => {
@@ -123,8 +126,170 @@
     $('refresh-models').hidden = demo;
     $('model-options').replaceChildren();
     $('model-message').hidden = true;
-    if (resetModel) $('model-id').value = configured?.default_model || (provider === 'ollama' ? 'qwen3:8b' : provider === 'openrouter' ? 'openai/gpt-4.1-mini' : 'demo');
+    if (resetModel) {
+      $('model-id').value = configured?.default_model || (provider === 'ollama' ? 'qwen3:8b' : provider === 'openrouter' ? 'openai/gpt-4.1-mini' : 'demo');
+      $('photo-model').value = '';
+    }
     $('provider-description').textContent = demo ? 'A labeled sample run. No model calls or live web research.' : provider === 'ollama' ? 'Your local model chooses its own research steps. It needs tool-calling support.' : 'Your research context is sent to the selected cloud provider through OpenRouter. Choose a model with tool-calling support.';
+    invalidatePhotoRecognition();
+    updatePhotoControls();
+  }
+
+  function photoStatus(message) {
+    $('photo-status').textContent = message;
+    $('photo-status').hidden = !message;
+  }
+
+  function updatePhotoControls() {
+    const provider = $('provider').value;
+    const supported = provider === 'ollama' || provider === 'openrouter';
+    const photo = state.photo;
+    $('plate-photo').disabled = !supported;
+    $('photo-model').disabled = !supported;
+    $('photo-options').hidden = !photo.dataUrl;
+    $('read-photo').disabled = !supported || !photo.dataUrl || photo.loading || photo.pending;
+    $('read-photo').textContent = photo.pending ? 'Reading plate…' : 'Read plate from photo';
+    $('photo-section').setAttribute('aria-busy', String(photo.loading || photo.pending));
+    $('photo-privacy').textContent = !supported
+      ? 'Choose Ollama or OpenRouter below to read a real photo. Demo uses sample data only.'
+      : provider === 'openrouter'
+        ? 'Reading sends this photo through OpenRouter to the selected cloud model. The photo is not saved in your case history.'
+        : 'Reading sends this photo to your configured Ollama server. The photo is not saved in your case history.';
+  }
+
+  function invalidatePhotoRecognition() {
+    const photo = state.photo;
+    photo.request += 1;
+    photo.controller?.abort();
+    photo.controller = null;
+    photo.pending = false;
+    photo.suggestion = null;
+    $('photo-suggestion').hidden = true;
+    $('photo-warnings').replaceChildren();
+    showAlert('photo-error', '');
+    photoStatus('');
+  }
+
+  function clearPhoto({ resetInput = true } = {}) {
+    const photo = state.photo;
+    photo.fileVersion += 1;
+    photo.reader?.abort();
+    photo.reader = null;
+    photo.dataUrl = '';
+    photo.loading = false;
+    if (resetInput) $('plate-photo').value = '';
+    $('photo-preview-container').hidden = true;
+    $('photo-preview').removeAttribute('src');
+    $('photo-filename').textContent = '';
+    invalidatePhotoRecognition();
+    updatePhotoControls();
+  }
+
+  function selectPhoto() {
+    const file = $('plate-photo').files?.[0];
+    clearPhoto({ resetInput: false });
+    if (!file) return;
+    if (!PHOTO_TYPES.has(file.type)) {
+      $('plate-photo').value = '';
+      showAlert('photo-error', 'Choose a JPEG, PNG, or WebP image. Convert other formats before uploading.');
+      return;
+    }
+    if (!file.size || file.size > PHOTO_MAX_BYTES) {
+      $('plate-photo').value = '';
+      showAlert('photo-error', file.size ? 'This photo is too large. Choose an image no larger than 8 MiB.' : 'This file is empty. Choose another photo.');
+      return;
+    }
+    const photo = state.photo;
+    const version = photo.fileVersion;
+    const reader = new FileReader();
+    photo.reader = reader;
+    photo.loading = true;
+    photoStatus('Preparing photo preview…');
+    updatePhotoControls();
+    const failed = () => {
+      if (version !== photo.fileVersion) return;
+      clearPhoto();
+      showAlert('photo-error', 'This image could not be opened. Choose a valid JPEG, PNG, or WebP photo.');
+    };
+    reader.onerror = failed;
+    reader.onload = () => {
+      if (version !== photo.fileVersion) return;
+      const dataUrl = reader.result;
+      if (typeof dataUrl !== 'string' || !dataUrl.startsWith(`data:${file.type};base64,`)) { failed(); return; }
+      const preview = new Image();
+      preview.onerror = failed;
+      preview.onload = () => {
+        if (version !== photo.fileVersion) return;
+        photo.reader = null;
+        photo.loading = false;
+        photo.dataUrl = dataUrl;
+        $('photo-preview').onerror = failed;
+        $('photo-preview').src = dataUrl;
+        $('photo-filename').textContent = file.name;
+        $('photo-preview-container').hidden = false;
+        photoStatus('Photo ready. Read the plate, then review the detected text.');
+        updatePhotoControls();
+      };
+      preview.src = dataUrl;
+    };
+    try { reader.readAsDataURL(file); }
+    catch { failed(); }
+  }
+
+  async function readPhoto() {
+    const photo = state.photo;
+    const provider = $('provider').value;
+    if (photo.pending || photo.loading || !photo.dataUrl || !['ollama', 'openrouter'].includes(provider)) return;
+    invalidatePhotoRecognition();
+    const modelId = $('photo-model').value.trim() || $('model-id').value.trim();
+    if (!modelId) {
+      showAlert('photo-error', 'Enter a model with vision support in Photo model or the research Model field.');
+      return;
+    }
+    const request = photo.request;
+    const controller = new AbortController();
+    photo.controller = controller;
+    photo.pending = true;
+    photoStatus('Reading the photo. Your plate and jurisdiction fields will stay as they are until you apply the result.');
+    updatePhotoControls();
+    const payload = { provider, model_id: modelId, image_data_url: photo.dataUrl };
+    if (provider === 'openrouter' && $('api-key').value.trim()) payload.api_key = $('api-key').value.trim();
+    try {
+      const result = await api('/api/photos/read', { method: 'POST', body: JSON.stringify(payload), signal: controller.signal });
+      if (request !== photo.request) return;
+      if (!result || typeof result.plate !== 'string' || typeof result.jurisdiction !== 'string' || result.plate.length > 20 || result.jurisdiction.length > 80) throw new Error('The photo reader returned an invalid result. Try again or enter the plate manually.');
+      photo.suggestion = { plate: result.plate.trim(), jurisdiction: result.jurisdiction.trim() };
+      $('detected-plate').textContent = photo.suggestion.plate || 'Not read';
+      $('detected-jurisdiction').textContent = photo.suggestion.jurisdiction || 'Not read — enter manually';
+      const warnings = Array.isArray(result.warnings) ? result.warnings.filter((warning) => typeof warning === 'string' && warning.trim()) : [];
+      $('photo-warnings').replaceChildren(...warnings.map((warning) => el('li', null, warning)));
+      $('photo-warnings').hidden = !warnings.length;
+      $('apply-photo').disabled = !photo.suggestion.plate;
+      $('photo-suggestion').hidden = false;
+      photoStatus(photo.suggestion.plate ? 'Photo read. Review the suggestion below before using it.' : 'No readable plate was found. Try a clearer photo or enter the plate manually.');
+    } catch (error) {
+      if (request !== photo.request || error.name === 'AbortError') return;
+      photoStatus('');
+      showAlert('photo-error', error.message);
+    } finally {
+      if (request === photo.request) {
+        photo.controller = null;
+        photo.pending = false;
+        updatePhotoControls();
+      }
+    }
+  }
+
+  function applyPhoto() {
+    const suggestion = state.photo.suggestion;
+    if (!suggestion?.plate) return;
+    $('plate').value = suggestion.plate;
+    // An unread jurisdiction must never carry over from a previous vehicle.
+    $('jurisdiction').value = suggestion.jurisdiction;
+    $('photo-suggestion').hidden = true;
+    state.photo.suggestion = null;
+    photoStatus(suggestion.jurisdiction ? 'Detected text added. Check the plate and jurisdiction before starting research.' : 'Detected plate added. Enter its issuing jurisdiction before starting research.');
+    $(suggestion.jurisdiction ? 'plate' : 'jurisdiction').focus();
   }
 
   async function loadModels() {
@@ -500,10 +665,22 @@
 
   $('research-form').addEventListener('submit', startRun);
   $('provider').addEventListener('change', () => updateProvider());
+  $('plate-photo').addEventListener('change', selectPhoto);
+  $('remove-photo').addEventListener('click', () => clearPhoto());
+  $('read-photo').addEventListener('click', readPhoto);
+  $('apply-photo').addEventListener('click', applyPhoto);
+  ['photo-model', 'model-id', 'api-key'].forEach((id) => $(id).addEventListener('input', () => {
+    invalidatePhotoRecognition();
+    updatePhotoControls();
+  }));
   $('refresh-models').addEventListener('click', loadModels);
   $('refresh-runs').addEventListener('click', loadRuns);
   $('demo-button').addEventListener('click', fillDemo);
   $('stop-button').addEventListener('click', stopRun);
-  window.addEventListener('beforeunload', closeStream);
+  window.addEventListener('beforeunload', () => {
+    closeStream();
+    state.photo.controller?.abort();
+    state.photo.reader?.abort();
+  });
   Promise.allSettled([configure(), loadRuns()]);
 })();

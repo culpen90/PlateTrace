@@ -75,6 +75,10 @@ def _error_message(provider: str, status: int, data: Any = None) -> str:
         return f"{name} has insufficient credits. Add credits or choose a model within your account limits."
     if status == 429:
         return f"{name} rate limit reached. Wait a moment before starting another research run."
+    if any(word in detail for word in ("image", "vision", "multimodal")) and any(
+        word in detail for word in ("support", "capab", "invalid", "endpoint")
+    ):
+        return f"This {name} model could not accept the photo. Select a vision-capable model and try again."
     if "tool" in detail and any(word in detail for word in ("support", "endpoint", "capab")):
         return f"This {name} model does not support the required tools. Select a tool-capable model."
     if status == 404:

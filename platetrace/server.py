@@ -15,6 +15,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .agent import research
 from .models import RunRequest
+from .photos import MAX_PHOTO_REQUEST_BYTES, PhotoError, PhotoRequest, read_plate
 from .providers import ProviderError, list_models
 from .store import Store, markdown_report, now
 from .terminal import terminal_status
@@ -24,6 +25,7 @@ STATIC = Path(__file__).parent / "static"
 
 def create_app(data_dir: Path | None = None):
     store = Store(data_dir or Path(os.getenv("PLATETRACE_DATA_DIR", ".platetrace")) / "runs")
+    photo_reads = 0
 
     @asynccontextmanager
     async def lifespan(app):
@@ -41,6 +43,7 @@ def create_app(data_dir: Path | None = None):
 
     @app.middleware("http")
     async def local_requests(request: Request, call_next):
+        body_limit = MAX_PHOTO_REQUEST_BYTES if request.url.path == "/api/photos/read" else 1_000_000
         origin = request.headers.get("origin")
         if origin:
             try:
@@ -53,14 +56,15 @@ def create_app(data_dir: Path | None = None):
                 return JSONResponse({"detail": "Cross-origin access is disabled."}, status_code=403)
         if request.headers.get("sec-fetch-site") == "cross-site":
             return JSONResponse({"detail": "Cross-site access is disabled."}, status_code=403)
-        if request.headers.get("content-length", "").isdigit() and int(request.headers["content-length"]) > 1_000_000:
+        if (request.headers.get("content-length", "").isdigit()
+                and int(request.headers["content-length"]) > body_limit):
             return JSONResponse({"detail": "Request body is too large."}, status_code=413)
         if request.method == "POST":
             # Bound chunked requests as well as requests declaring a length.
             body = bytearray()
             async for chunk in request.stream():
                 body.extend(chunk)
-                if len(body) > 1_000_000:
+                if len(body) > body_limit:
                     return JSONResponse({"detail": "Request body is too large."}, status_code=413)
             request._body = bytes(body)
         response = await call_next(request)
@@ -132,6 +136,21 @@ def create_app(data_dir: Path | None = None):
         run = store.add(data)
         run.task = asyncio.create_task(research(run, request), name=f"research-{run_id}")
         return {"id": run_id}
+
+    @app.post("/api/photos/read")
+    async def read_photo(request: PhotoRequest):
+        nonlocal photo_reads
+        if photo_reads >= 2:
+            raise HTTPException(429, "Two photos are already being read. Wait for one to finish and try again.")
+        photo_reads += 1
+        try:
+            return await read_plate(request)
+        except PhotoError as exc:
+            raise HTTPException(422, str(exc)) from None
+        except ProviderError as exc:
+            raise HTTPException(502, str(exc)) from None
+        finally:
+            photo_reads -= 1
 
     @app.get("/api/runs")
     async def list_runs():

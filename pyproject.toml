@@ -7,7 +7,7 @@ name = "platetrace"
 version = "0.1.0"
 description = "Local, source-cited vehicle research with OpenRouter and Ollama"
 requires-python = ">=3.11"
-dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1", "httpx>=0.28,<1", "beautifulsoup4>=4.13,<5", "python-dotenv>=1,<2"]
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1", "httpx>=0.28,<1", "beautifulsoup4>=4.13,<5", "python-dotenv>=1,<2", "Pillow>=11.1,<13"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "ruff>=0.11,<1"]

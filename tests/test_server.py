@@ -149,6 +149,102 @@ async def test_request_body_size_is_enforced_for_declared_and_chunked_bodies(app
     assert chunked.status_code == 413
 
 
+def photo_payload(**overrides):
+    return {
+        "provider": "ollama", "model_id": "vision-model", "image_data_url": "data:image/png;base64,AAAA",
+        **overrides,
+    }
+
+
+async def test_photo_read_is_transient_and_does_not_start_research(application, monkeypatch):
+    app, client, directory = application
+    result = {"plate": "ABC123", "jurisdiction": "California, US", "warnings": []}
+    reader = AsyncMock(return_value=result)
+    monkeypatch.setattr(server, "read_plate", reader)
+    response = await client.post("/api/photos/read", json=photo_payload(api_key="PHOTO_KEY_NOT_FOR_STORAGE"))
+    assert response.status_code == 200
+    assert response.json() == result
+    assert reader.await_args.args[0].api_key == "PHOTO_KEY_NOT_FOR_STORAGE"
+    assert "PHOTO_KEY_NOT_FOR_STORAGE" not in response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert not app.state.store.runs
+    assert not list(directory.glob("*.json"))
+
+
+@pytest.mark.parametrize("overrides", [{"provider": "demo"}, {"model_id": ""}, {"unexpected": "value"}])
+async def test_photo_validation_does_not_echo_credentials_or_image(application, overrides):
+    _, client, _ = application
+    response = await client.post("/api/photos/read", json=photo_payload(
+        api_key="PHOTO_SECRET", image_data_url="PRIVATE_PHOTO_BYTES", **overrides,
+    ))
+    assert response.status_code == 422
+    assert "PHOTO_SECRET" not in response.text
+    assert "PRIVATE_PHOTO_BYTES" not in response.text
+
+
+@pytest.mark.parametrize("error,status", [
+    (server.PhotoError("Choose a readable JPEG, PNG, or WebP photo."), 422),
+    (server.ProviderError("Choose a vision-capable model."), 502),
+])
+async def test_photo_errors_are_actionable(application, monkeypatch, error, status):
+    _, client, _ = application
+    monkeypatch.setattr(server, "read_plate", AsyncMock(side_effect=error))
+    response = await client.post("/api/photos/read", json=photo_payload())
+    assert response.status_code == status
+    assert response.json()["detail"] == str(error)
+
+
+async def test_larger_body_limit_is_scoped_to_photo_route(application, monkeypatch):
+    _, client, _ = application
+    monkeypatch.setattr(server, "read_plate", AsyncMock(return_value={"plate": "", "jurisdiction": "", "warnings": []}))
+    data = photo_payload(image_data_url="data:image/png;base64," + "A" * 1_000_004)
+    assert (await client.post("/api/photos/read", json=data)).status_code == 200
+    assert (await client.post("/api/runs", json=data)).status_code == 413
+    oversized = await client.post("/api/photos/read", content=b"x" * (server.MAX_PHOTO_REQUEST_BYTES + 1))
+    assert oversized.status_code == 413
+
+    async def chunks():
+        yield b"x" * (server.MAX_PHOTO_REQUEST_BYTES // 2)
+        yield b"x" * (server.MAX_PHOTO_REQUEST_BYTES // 2 + 1)
+
+    chunked = await client.post("/api/photos/read", content=chunks(), headers={"Content-Type": "application/json"})
+    assert chunked.status_code == 413
+
+
+async def test_photo_concurrency_limit_releases_after_error(application, monkeypatch):
+    _, client, _ = application
+    both_started, release = asyncio.Event(), asyncio.Event()
+    started = 0
+
+    async def wait_for_release(request):
+        nonlocal started
+        started += 1
+        if started == 2:
+            both_started.set()
+        await release.wait()
+        raise server.ProviderError("Try another vision model.")
+
+    monkeypatch.setattr(server, "read_plate", wait_for_release)
+    requests = [asyncio.create_task(client.post("/api/photos/read", json=photo_payload())) for _ in range(2)]
+    try:
+        await asyncio.wait_for(both_started.wait(), timeout=2)
+        assert (await client.post("/api/photos/read", json=photo_payload())).status_code == 429
+    finally:
+        release.set()
+        responses = await asyncio.gather(*requests)
+    assert all(response.status_code == 502 for response in responses)
+    assert (await client.post("/api/photos/read", json=photo_payload())).status_code == 502
+
+
+async def test_photo_upload_rejects_cross_origin_requests_before_reading(application, monkeypatch):
+    _, client, _ = application
+    reader = AsyncMock()
+    monkeypatch.setattr(server, "read_plate", reader)
+    response = await client.post("/api/photos/read", json=photo_payload(), headers={"Origin": "https://example.com"})
+    assert response.status_code == 403
+    reader.assert_not_awaited()
+
+
 async def test_concurrent_run_limit_and_cancel_cleanup(application, monkeypatch):
     app, client, _ = application
     started = asyncio.Event()

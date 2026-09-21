@@ -63,7 +63,7 @@ The agent can use any public site within the research scope. It is instructed to
 
 ## Research workflow
 
-1. Enter a plate and issuing country/state/province. The same text may occur in multiple jurisdictions.
+1. Enter a plate and issuing country/state/province, or upload a plate photo and review the detected text. The same text may occur in multiple jurisdictions.
 2. Describe the public vehicle question. Optionally add a VIN, make/model/year, or starting URLs you already have.
 3. Select OpenRouter or Ollama, a tool-capable model, and the run's turn limit. Enable the terminal if Docker is ready.
 4. Choose the research purpose that describes your situation (see below), then confirm that you are authorized to conduct the research and use any supplied records.
@@ -71,6 +71,14 @@ The agent can use any public site within the research scope. It is instructed to
 6. Review findings, citations, and limitations. Export JSON (including events and sources) or a Markdown report.
 
 A supplied VIN or record is labeled user-provided, not independently verified. Model/year recalls alone do not establish whether a particular VIN is affected or repaired. No result does not establish that a vehicle does not exist or has no recalls.
+
+### Start from a plate photo
+
+Choose a JPEG, PNG, or WebP photo (up to 8 MiB) in the photo section beneath the plate fields. A preview appears before anything is sent to a model. Select OpenRouter or Ollama as the research engine, then choose **Read plate from photo**. The selected model must support images. You can enter a separate **Photo model** to read the image while keeping your tool-capable research model for the investigation. Demo mode does not read real photos.
+
+Review the detected text, choose **Use detected plate**, and correct the plate or issuing jurisdiction as needed before starting research. If the jurisdiction cannot be read, enter it yourself. For a blurry photo or multiple plates, use a clearer photo cropped to one plate. Reading a photo does not start a research run.
+
+OpenRouter sends the photo to the selected cloud model service and may incur charges. Ollama sends it to your configured Ollama server. Photos are validated, oriented, resized when needed, and stripped of metadata before model processing; images over 24 megapixels and animated images are rejected. PlateTrace does not save uploaded photos in case history or exports. Only the text you apply and submit becomes part of the research input. Your provider's own data policies still apply.
 
 ### Research purpose
 
@@ -116,7 +124,7 @@ Each run is limited to 2–40 model turns (default 12), eight tool calls per tur
 ## Development and verification
 
 ```sh
-.venv/bin/pytest -q
+.venv/bin/python -m pytest -q
 .venv/bin/ruff check platetrace tests
 node --check platetrace/static/app.js
 ```

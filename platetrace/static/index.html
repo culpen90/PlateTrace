@@ -33,11 +33,35 @@
           <form id="research-form">
             <div class="input-row plate-row"><div class="field"><label for="plate">License plate <span class="required">*</span></label><div class="plate-input"><span aria-hidden="true">▤</span><input id="plate" name="plate" required maxlength="20" placeholder="ABC1234" autocomplete="off" spellcheck="false"></div></div><div class="field"><label for="jurisdiction">Jurisdiction <span class="required">*</span></label><input id="jurisdiction" name="jurisdiction" required minlength="2" maxlength="80" placeholder="e.g. California, US" autocomplete="off"></div></div>
             <p class="field-note">Use the state, province, or country that issued the plate.</p>
+            <section id="photo-section" class="photo-section" aria-labelledby="photo-title">
+              <div class="photo-heading"><h3 id="photo-title">Read a plate from a photo</h3><span class="optional">optional</span></div>
+              <label class="photo-file-label" for="plate-photo">Choose a license plate photo</label>
+              <input id="plate-photo" class="photo-file" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="photo-format photo-privacy" disabled>
+              <p id="photo-format" class="field-note">JPEG, PNG, or WebP · up to 8 MiB. Use a clear photo of one plate.</p>
+              <p id="photo-privacy" class="field-note">Choose Ollama or OpenRouter below to read a real photo. Demo uses sample data only.</p>
+              <div id="photo-preview-container" class="photo-preview-container" hidden>
+                <img id="photo-preview" class="photo-preview" alt="Selected license plate photo">
+                <div class="photo-preview-caption"><span id="photo-filename"></span><button id="remove-photo" class="text-button" type="button">Remove photo</button></div>
+              </div>
+              <div id="photo-options" hidden>
+                <div class="field photo-model-field"><label for="photo-model">Photo model <span class="optional">optional</span></label><input id="photo-model" maxlength="200" list="model-options" placeholder="Use the research model" autocomplete="off" aria-describedby="photo-model-note"><p id="photo-model-note" class="field-note">Photo reading needs a model with vision support. Use a separate model here if your research model cannot read images.</p></div>
+                <button id="read-photo" class="secondary-button photo-read-button" type="button" disabled>Read plate from photo</button>
+              </div>
+              <p id="photo-status" class="field-note photo-status" role="status" aria-live="polite" hidden></p>
+              <div id="photo-error" class="alert error photo-error" role="alert" hidden></div>
+              <div id="photo-suggestion" class="photo-suggestion" aria-labelledby="photo-suggestion-title" hidden>
+                <h4 id="photo-suggestion-title">Review the detected plate</h4>
+                <dl class="photo-detected"><div><dt>License plate</dt><dd id="detected-plate"></dd></div><div><dt>Jurisdiction</dt><dd id="detected-jurisdiction"></dd></div></dl>
+                <ul id="photo-warnings" class="photo-warnings" hidden></ul>
+                <p class="field-note">Check every character against the photo. You can correct the fields above before starting research.</p>
+                <button id="apply-photo" class="secondary-button photo-apply-button" type="button">Use detected plate</button>
+              </div>
+            </section>
             <div class="field objective-field"><label for="objective">Research objective</label><textarea id="objective" name="objective" rows="2" maxlength="2000">Find publicly available vehicle details, specifications, and recall information.</textarea></div>
             <div class="divider"></div>
             <div class="input-row provider-row"><div class="field"><label for="provider">Research engine</label><select id="provider" name="provider"><option value="demo">Demo · sample research</option><option value="ollama">Ollama · local model</option><option value="openrouter">OpenRouter · cloud model</option></select></div><div class="field"><label for="model-id">Model <button id="refresh-models" class="text-button" type="button" aria-label="Refresh available models">Refresh ↻</button></label><input id="model-id" name="model_id" list="model-options" placeholder="Select or enter model" autocomplete="off"><datalist id="model-options"></datalist></div></div>
             <p id="provider-description" class="field-note provider-note">Explore a complete example without an API key.</p>
-            <div id="api-key-field" class="field" hidden><label for="api-key">OpenRouter API key <span class="optional">optional if configured on server</span></label><input id="api-key" name="api_key" type="password" placeholder="sk-or-…" autocomplete="off"><p class="field-note">Used for this run only. Never saved in this browser.</p></div>
+            <div id="api-key-field" class="field" hidden><label for="api-key">OpenRouter API key <span class="optional">optional if configured on server</span></label><input id="api-key" name="api_key" type="password" placeholder="sk-or-…" autocomplete="off"><p class="field-note">Used only for the requests you start. Never saved in this browser.</p></div>
             <div id="model-message" class="field-note" role="status" hidden></div>
             <label class="check-label terminal-option"><input id="enable-terminal" type="checkbox"><span>Enable autonomous terminal<small id="terminal-note">Checking internet-enabled Docker terminal availability…</small></span></label>
             <details class="advanced-options"><summary>Vehicle clues & research options <span aria-hidden="true">+</span></summary><div class="advanced-content">

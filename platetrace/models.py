@@ -4,6 +4,10 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+DEFAULT_MAX_STEPS = 24
+MAX_STEPS = 40
+REPORT_TURNS = 2
+
 
 class VehicleRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -38,7 +42,7 @@ class RunRequest(BaseModel):
     records: list[VehicleRecord] = Field(default_factory=list, max_length=500)
     enable_terminal: bool = False
     use_memory: bool = True
-    max_steps: int = Field(default=12, ge=2, le=40)
+    max_steps: int = Field(default=DEFAULT_MAX_STEPS, ge=2, le=MAX_STEPS)
 
     @field_validator("plate")
     @classmethod

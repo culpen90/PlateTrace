@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from platetrace import agent, server
+from platetrace.models import RunRequest
 from platetrace.store import now
 
 
@@ -73,6 +74,32 @@ async def test_create_demo_replay_sse_and_export_are_consistent_and_secret_free(
     assert (await client.get(f"/api/runs/{run_id}/export?format=html")).status_code == 400
 
 
+async def test_turn_budget_config_matches_request_schema_and_default(application):
+    app, client, _ = application
+    config = (await client.get("/api/config")).json()
+    schema = RunRequest.model_json_schema()["properties"]["max_steps"]
+    assert config["defaults"]["max_steps"] == schema["default"] == 24
+    assert config["limits"]["max_steps"] == schema["maximum"] == 40
+    assert config["limits"]["report_turns"] == 2
+    assert schema["minimum"] == 2
+
+    response = await client.post("/api/runs", json=payload())
+    assert response.status_code == 201
+    run = app.state.store.runs[response.json()["id"]]
+    await asyncio.wait_for(run.task, timeout=2)
+    assert run.data["max_steps"] == config["defaults"]["max_steps"]
+
+
+@pytest.mark.parametrize("max_steps", [2, 40])
+async def test_turn_budget_accepts_supported_boundaries(application, max_steps):
+    app, client, _ = application
+    response = await client.post("/api/runs", json=payload(max_steps=max_steps))
+    assert response.status_code == 201
+    run = app.state.store.runs[response.json()["id"]]
+    await asyncio.wait_for(run.task, timeout=2)
+    assert run.data["max_steps"] == max_steps
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -82,7 +109,8 @@ async def test_create_demo_replay_sse_and_export_are_consistent_and_secret_free(
         {"objective": "find the owner's address"},
         {"source_urls": ["file:///etc/passwd"]},
         {"source_urls": ["https://user:password@example.com"]},
-        {"max_steps": 99},
+        {"max_steps": 1},
+        {"max_steps": 41},
     ],
 )
 async def test_validation_rejects_unsupported_input_without_echoing_keys(application, overrides):

@@ -16,7 +16,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import issues
 from .agent import research
 from .memory import MemoryStore
-from .models import RunRequest
+from .models import DEFAULT_MAX_STEPS, MAX_STEPS, REPORT_TURNS, RunRequest
 from .photos import MAX_PHOTO_REQUEST_BYTES, PhotoError, PhotoRequest, read_plate
 from .providers import ProviderError, list_models
 from .store import Store, markdown_report, now
@@ -113,11 +113,12 @@ def create_app(data_dir: Path | None = None):
             {"id": "ollama", "label": "Ollama · local", "default_model": os.getenv("OLLAMA_MODEL", "qwen3:8b")},
             {"id": "openrouter", "label": "OpenRouter · cloud", "default_model": os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini")},
             {"id": "demo", "label": "Demo · synthetic fixture", "default_model": "demo-fixture"},
-        ], "defaults": {"provider": "ollama", "model": os.getenv("OLLAMA_MODEL", "qwen3:8b")},
+        ], "defaults": {"provider": "ollama", "model": os.getenv("OLLAMA_MODEL", "qwen3:8b"),
+                         "max_steps": DEFAULT_MAX_STEPS},
             "terminal": await terminal_status(),
             "issue_reporting": issues.issue_reporting_status(),
             "search": {"available": True, "provider": "Brave" if os.getenv("BRAVE_SEARCH_API_KEY") else "DuckDuckGo (best effort)"},
-            "allowed_domains": [], "limits": {"max_steps": 40},
+            "allowed_domains": [], "limits": {"max_steps": MAX_STEPS, "report_turns": REPORT_TURNS},
             "openrouter_key_configured": bool(os.getenv("OPENROUTER_API_KEY"))}
 
     @app.get("/api/models")

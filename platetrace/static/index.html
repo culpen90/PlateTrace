@@ -16,6 +16,7 @@
       <nav aria-label="Workspace navigation">
         <a class="nav-link active" href="#research"><span aria-hidden="true">⌕</span> Research workspace <span class="nav-arrow" aria-hidden="true">↗</span></a>
         <a class="nav-link" href="#recent-runs"><span aria-hidden="true">▤</span> Research history</a>
+        <a class="nav-link" href="#research-memory"><span aria-hidden="true">↺</span> Research memory</a>
         <a class="nav-link" href="#sources"><span aria-hidden="true">◎</span> Source library</a>
       </nav>
       <div class="sidebar-note"><div class="note-symbol" aria-hidden="true">↳</div><p>Every finding has a trail.</p><span>Public vehicle information.<br>Evidence you can inspect.</span></div>
@@ -63,6 +64,7 @@
             <p id="provider-description" class="field-note provider-note">Explore a complete example without an API key.</p>
             <div id="api-key-field" class="field" hidden><label for="api-key">OpenRouter API key <span class="optional">optional if configured on server</span></label><input id="api-key" name="api_key" type="password" placeholder="sk-or-…" autocomplete="off"><p class="field-note">Used only for the requests you start. Never saved in this browser.</p></div>
             <div id="model-message" class="field-note" role="status" hidden></div>
+            <label class="check-label memory-option"><input id="use-memory" type="checkbox" checked aria-describedby="memory-option-note"><span>Use past research memory<small id="memory-option-note">Relevant lessons and source leads are shared with your selected model. The agent must check them again and saves lessons from this run.</small></span></label>
             <label class="check-label terminal-option"><input id="enable-terminal" type="checkbox"><span>Enable autonomous terminal<small id="terminal-note">Checking internet-enabled Docker terminal availability…</small></span></label>
             <p id="issue-reporting-note" class="field-note issue-reporting-note" role="status">Checking GitHub issue reporting availability…</p>
             <details class="advanced-options"><summary>Vehicle clues & research options <span aria-hidden="true">+</span></summary><div class="advanced-content">
@@ -94,6 +96,16 @@
       </div>
 
       <section class="panel sources-panel" id="sources" aria-labelledby="sources-title"><div class="panel-heading"><div><span class="section-number">03</span><h2 id="sources-title">Evidence & sources</h2><span id="source-count" class="count-badge">0</span></div><span class="tiny-tag">TRACEABLE BY DESIGN</span></div><div id="source-list" class="source-list"><div class="source-empty"><span aria-hidden="true">◎</span><p>Source links and excerpts will appear as your agent gathers evidence.</p></div></div></section>
+      <section class="panel memory-panel" id="research-memory" aria-labelledby="memory-title">
+        <div class="panel-heading"><div><span class="section-number" aria-hidden="true">↺</span><h2 id="memory-title">Research memory</h2><span id="memory-count" class="count-badge">0</span></div><button id="refresh-memory" class="text-button" type="button">Refresh ↻</button></div>
+        <div class="memory-content">
+          <p class="memory-description">Lessons from previous runs help the agent choose useful sources and avoid repeating failed approaches. These are leads to verify, not evidence for a new vehicle.</p>
+          <details id="memory-inspector" class="memory-inspector"><summary>Inspect saved memory</summary><div id="memory-list"><p class="memory-empty">Loading saved memory…</p></div></details>
+          <div class="memory-controls"><span id="memory-status" role="status" aria-live="polite">Saved locally, separate from case history.</span><button id="clear-memory" class="text-button" type="button" disabled>Clear memory</button></div>
+          <div id="memory-clear-confirmation" class="memory-clear-confirmation" hidden><p>Clear all saved research memory? Your case history will stay. Runs already in progress will not add new memory when they finish.</p><div><button id="confirm-clear-memory" class="secondary-button" type="button">Clear saved memory</button><button id="cancel-clear-memory" class="text-button" type="button">Keep memory</button></div></div>
+          <div id="memory-error" class="alert error" role="alert" hidden></div>
+        </div>
+      </section>
       <section class="history-section" id="recent-runs" aria-labelledby="history-title"><div class="history-heading"><h2 id="history-title">Recent research</h2><button id="refresh-runs" class="text-button" type="button">Refresh ↻</button></div><div class="history-table"><div class="history-table-head"><span>VEHICLE / JURISDICTION</span><span>ENGINE</span><span>STARTED</span><span>STATUS</span></div><div id="run-list"><p class="history-empty">Your research history will appear here.</p></div></div></section>
       <footer class="page-footer"><span>PlateTrace <span class="footer-slash">/</span> Public vehicle research</span><span>Find the facts. Keep the sources.</span></footer>
     </main>

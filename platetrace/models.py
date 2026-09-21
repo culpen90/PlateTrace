@@ -1,6 +1,6 @@
 """Validated inputs and evidence-based output shapes."""
 import re
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -37,6 +37,7 @@ class RunRequest(BaseModel):
     source_urls: list[str] = Field(default_factory=list, max_length=12)
     records: list[VehicleRecord] = Field(default_factory=list, max_length=500)
     enable_terminal: bool = False
+    use_memory: bool = True
     max_steps: int = Field(default=12, ge=2, le=40)
 
     @field_validator("plate")
@@ -109,3 +110,11 @@ class Report(BaseModel):
         if any(len(value) > 2000 for value in values):
             raise ValueError("Report entries must be under 2000 characters.")
         return values
+
+
+class FinishReport(Report):
+    """Optional reusable lessons accompany a report, separate from vehicle findings."""
+
+    research_lessons: list[Annotated[str, Field(strict=True, min_length=1, max_length=1000)]] = Field(
+        default_factory=list, max_length=5,
+    )

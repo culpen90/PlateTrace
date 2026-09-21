@@ -10,6 +10,7 @@
     config: null, run: null, stream: null, poll: null, sourceRefresh: null,
     eventIds: new Set(), eventCount: 0, submitting: false, modelRequest: 0,
     selection: 0, runListRequest: 0, providers: [],
+    memory: { request: 0, loaded: false, clearing: false },
     photo: { fileVersion: 0, request: 0, reader: null, controller: null, dataUrl: '', loading: false, pending: false, suggestion: null },
   };
 
@@ -150,6 +151,10 @@
       $('photo-model').value = '';
     }
     $('provider-description').textContent = demo ? 'A labeled sample run. No model calls or live web research.' : provider === 'ollama' ? 'Your local model chooses its own research steps. It needs tool-calling support.' : 'Your research context is sent to the selected cloud provider through OpenRouter. Choose a model with tool-calling support.';
+    $('use-memory').disabled = demo;
+    $('memory-option-note').textContent = demo
+      ? 'Demo runs do not use or save research memory.'
+      : 'Relevant lessons and source leads are shared with your selected model. The agent must check them again and saves lessons from this run. Uncheck to skip using and saving memory.';
     const reporting = state.config?.issue_reporting;
     $('issue-reporting-note').textContent = reporting?.available
       ? demo ? `Automatic GitHub reporting is configured for ${reporting.repository}. Demo runs never publish issues.`
@@ -366,6 +371,7 @@
       objective: $('objective').value.trim(), provider, model_id: modelId,
       purpose: $('purpose').value, authorized: $('authorized').checked,
       source_urls: sourceUrls, records, enable_terminal: $('enable-terminal').checked && !$('enable-terminal').disabled,
+      use_memory: $('use-memory').checked && !isDemo(provider),
       max_steps: Number($('max-steps').value),
     };
     if (!data.plate || !data.jurisdiction) throw new Error('Enter a license plate and its issuing jurisdiction.');
@@ -517,6 +523,7 @@
     if (event.type === 'tool_start') return { label: data?.name || 'TOOL', text: data?.arguments?.command ? `$ ${data.arguments.command}` : data?.arguments?.query || data?.arguments?.url || 'Starting tool', detail: data?.arguments };
     if (event.type === 'tool_result') return { label: data?.name || 'RESULT', text: data?.result?.error ? readable(data.result.error) : data?.result?.summary || data?.result?.title || 'Tool returned results', detail: data?.result };
     if (event.type === 'report') return { label: 'BRIEF READY', text: 'Research brief assembled with findings and source references.' };
+    if (event.type === 'memory') return { label: 'MEMORY', text: data?.message || 'Research memory updated.', detail: data };
     if (event.type === 'status') return { label: 'STATUS', text: data?.message || data?.status || readable(data) };
     if (event.type === 'error') return { label: 'ATTENTION', text: data?.message || data?.error || readable(data) };
     if (event.type === 'done') return { label: 'FINISHED', text: data?.message || data?.status || 'Research run finished.' };
@@ -533,7 +540,7 @@
     const log = $('activity-log');
     const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 70;
     const display = eventDisplay(event);
-    const row = el('div', `log-event ${event.type === 'error' ? 'error' : ''}`);
+    const row = el('div', `log-event ${event.type === 'error' || (event.type === 'memory' && event.data?.action === 'error') ? 'error' : ''}`);
     row.append(el('time', 'event-time', timeLabel(event.time)));
     const body = el('div', 'event-body');
     body.append(el('span', 'event-label', String(display.label).toUpperCase()), el('span', null, readable(display.text)));
@@ -544,7 +551,7 @@
     }
     if (display.detail !== undefined) {
       const details = el('details');
-      details.append(el('summary', null, event.type === 'tool_start' ? 'View arguments' : 'View result'), el('pre', null, readable(display.detail)));
+      details.append(el('summary', null, event.type === 'tool_start' ? 'View arguments' : event.type === 'memory' ? 'View memory details' : 'View result'), el('pre', null, readable(display.detail)));
       body.append(details);
     }
     row.append(body);
@@ -563,12 +570,13 @@
       }
     }
     if (event.type === 'error') showAlert('run-error', readable(event.data?.error || event.data?.message || event.data));
+    if (event.type === 'memory' && event.data?.action === 'saved') loadMemory();
     if (event.type === 'tool_result' && !state.sourceRefresh) {
       state.sourceRefresh = setTimeout(() => { state.sourceRefresh = null; refreshCurrentRun(); }, 500);
     }
     if (event.type === 'done') {
       closeStream();
-      refreshCurrentRun().then(() => loadRuns());
+      refreshCurrentRun().then(() => { loadRuns(); loadMemory(); });
     }
   }
 
@@ -599,7 +607,7 @@
     if (!window.EventSource) { beginPolling(id, selection); return; }
     const stream = new EventSource(`/api/runs/${encodeURIComponent(id)}/events`);
     state.stream = stream;
-    for (const type of ['status', 'tool_start', 'tool_result', 'note', 'report', 'error', 'done']) {
+    for (const type of ['status', 'tool_start', 'tool_result', 'note', 'report', 'memory', 'error', 'done']) {
       stream.addEventListener(type, (message) => {
         if (selection !== state.selection || state.run?.id !== id || !message.data) return;
         try { appendEvent(JSON.parse(message.data)); }
@@ -683,6 +691,103 @@
     }
   }
 
+  function renderMemory(data) {
+    const entries = Array.isArray(data.entries) ? data.entries : [];
+    $('memory-count').textContent = String(entries.length);
+    $('memory-status').textContent = entries.length
+      ? `${entries.length} saved research ${entries.length === 1 ? 'run' : 'runs'} · stored locally, separate from case history.`
+      : 'No saved memory yet. Future runs with memory enabled can add lessons.';
+    $('memory-list').replaceChildren(...entries.map((entry) => {
+      const card = el('details', 'memory-entry');
+      const summary = el('summary');
+      const vehicle = [entry.year, entry.make, entry.model].filter(Boolean).join(' ');
+      summary.append(el('span', 'memory-entry-title', [entry.jurisdiction, vehicle].filter(Boolean).join(' · ') || 'Past research'));
+      summary.append(el('span', 'memory-entry-meta', [timeLabel(entry.created_at, false), entry.status].filter(Boolean).join(' · ')));
+      card.append(summary);
+      const body = el('div', 'memory-entry-body');
+      if (entry.outcome) body.append(el('p', null, entry.outcome));
+      const lessons = Array.isArray(entry.lessons) ? entry.lessons : [];
+      if (lessons.length) {
+        body.append(el('h3', null, 'Research lessons'));
+        const list = el('ul');
+        list.append(...lessons.map((lesson) => el('li', null, readable(lesson))));
+        body.append(list);
+      }
+      const sources = (Array.isArray(entry.sources) ? entry.sources : []).filter((source) => safeUrl(source?.url));
+      if (sources.length) {
+        body.append(el('h3', null, 'Source leads to recheck'));
+        const list = el('ul', 'memory-source-list');
+        sources.forEach((source) => {
+          const item = el('li');
+          const link = el('a', null, source.url);
+          link.href = safeUrl(source.url);
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          item.append(link);
+          list.append(item);
+        });
+        body.append(list);
+      }
+      const outcomes = Object.entries(entry.tool_outcomes || {}).filter(([, counts]) => counts && typeof counts === 'object');
+      if (outcomes.length) {
+        body.append(el('h3', null, 'Observed tool outcomes'));
+        const list = el('ul');
+        outcomes.forEach(([tool, counts]) => list.append(el('li', null, `${tool}: ${Number(counts.success) || 0} succeeded, ${Number(counts.failure) || 0} failed`)));
+        body.append(list);
+      }
+      card.append(body);
+      return card;
+    }));
+    if (!entries.length) $('memory-list').append(el('p', 'memory-empty', 'No research lessons have been saved. Demo runs and runs with memory turned off do not add entries.'));
+    state.memory.loaded = true;
+    $('clear-memory').disabled = state.memory.clearing;
+  }
+
+  async function loadMemory() {
+    if (state.memory.clearing) return;
+    const request = ++state.memory.request;
+    $('refresh-memory').disabled = true;
+    showAlert('memory-error', '');
+    try {
+      const data = await api('/api/memory');
+      if (request !== state.memory.request) return;
+      renderMemory(data);
+    } catch (error) {
+      if (request === state.memory.request) {
+        showAlert('memory-error', `Memory is unavailable. ${error.message}`);
+        if (!state.memory.loaded) $('memory-list').replaceChildren(el('p', 'memory-empty', 'Saved memory could not be loaded.'));
+      }
+    } finally {
+      if (request === state.memory.request) $('refresh-memory').disabled = false;
+    }
+  }
+
+  async function clearMemory() {
+    if (state.memory.clearing) return;
+    state.memory.clearing = true;
+    state.memory.request += 1;
+    $('confirm-clear-memory').disabled = true;
+    $('cancel-clear-memory').disabled = true;
+    $('clear-memory').disabled = true;
+    $('refresh-memory').disabled = true;
+    showAlert('memory-error', '');
+    try {
+      const data = await api('/api/memory', { method: 'DELETE' });
+      renderMemory(data);
+      $('memory-status').textContent = 'Research memory cleared. Case history is still available.';
+      $('memory-clear-confirmation').hidden = true;
+    } catch (error) {
+      showAlert('memory-error', `Unable to clear memory. ${error.message}`);
+    } finally {
+      state.memory.clearing = false;
+      $('confirm-clear-memory').disabled = false;
+      $('cancel-clear-memory').disabled = false;
+      $('clear-memory').disabled = !state.memory.loaded;
+      $('refresh-memory').disabled = false;
+      ($('memory-clear-confirmation').hidden ? $('clear-memory') : $('confirm-clear-memory')).focus();
+    }
+  }
+
   function fillDemo() {
     showAlert('form-error', '');
     const demo = state.providers.find((p) => isDemo(p.id));
@@ -719,6 +824,16 @@
   }));
   $('refresh-models').addEventListener('click', loadModels);
   $('refresh-runs').addEventListener('click', loadRuns);
+  $('refresh-memory').addEventListener('click', loadMemory);
+  $('clear-memory').addEventListener('click', () => {
+    $('memory-clear-confirmation').hidden = false;
+    $('confirm-clear-memory').focus();
+  });
+  $('cancel-clear-memory').addEventListener('click', () => {
+    $('memory-clear-confirmation').hidden = true;
+    $('clear-memory').focus();
+  });
+  $('confirm-clear-memory').addEventListener('click', clearMemory);
   $('demo-button').addEventListener('click', fillDemo);
   $('stop-button').addEventListener('click', stopRun);
   window.addEventListener('beforeunload', () => {
@@ -726,5 +841,5 @@
     state.photo.controller?.abort();
     state.photo.reader?.abort();
   });
-  Promise.allSettled([configure(), loadRuns()]);
+  Promise.allSettled([configure(), loadRuns(), loadMemory()]);
 })();

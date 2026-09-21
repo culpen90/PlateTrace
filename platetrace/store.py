@@ -105,5 +105,17 @@ def markdown_report(data: dict) -> str:
         lines += ["", "## GitHub issue reports", ""]
         for issue in data["issue_reports"]:
             lines += [f"- #{issue['number']} ({issue['status']}): {issue['url']}"]
+    memory = data.get("memory")
+    if memory:
+        lines += ["", "## Research memory", "",
+                  "Research memory supplies planning context only. Findings require this run's sources.",
+                  f"Memory enabled: {'yes' if memory.get('enabled') else 'no'}.",
+                  f"New memory saved: {'yes' if memory.get('saved') else 'no'}."]
+        for entry in memory.get("recalled", []):
+            lines += [f"- Recalled run {entry['id']} from {entry['created_at']}."]
+        if memory.get("error"):
+            lines += [memory["error"]]
+        for lesson in data.get("research_lessons", []):
+            lines += [f"- Research lesson: {lesson}"]
     lines += ["", "AI-generated research requires independent verification. A plate is not a unique global vehicle identifier."]
     return "\n".join(lines) + "\n"
